@@ -1,0 +1,23 @@
+services:
+  ethos:
+    build: { context: ., args: { PROJECT: MockEthos.Api } }
+    ports: ["5101:8080"]
+
+  targets:
+    build: { context: ., args: { PROJECT: TargetSystems.Api } }
+    environment:
+      CHAOS_RATE: "0.3"
+    ports: ["5201:8080"]
+
+  hub:
+    build: { context: ., args: { PROJECT: CampusSync.Hub } }
+    environment:
+      Ethos__BaseUrl: "http://ethos:8080/"
+      Targets__BaseUrl: "http://targets:8080/"
+      ConnectionStrings__Sync: "Data Source=/data/campussync.db"
+    volumes: ["hubdata:/data"]
+    ports: ["5000:8080"]
+    depends_on: [ethos, targets]
+
+volumes:
+  hubdata:

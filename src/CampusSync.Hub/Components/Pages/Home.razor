@@ -1,0 +1,150 @@
+﻿@page "/"
+@rendermode InteractiveServer
+@implements IDisposable
+@using CampusSync.Hub.Data
+@using CampusSync.Hub.Sync
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<SyncDbContext> DbFactory
+@inject SyncNotifier Notifier
+@inject RegistrationSyncProcessor Processor
+@inject IHttpClientFactory Http
+
+<PageTitle>CampusSync Hub</PageTitle>
+
+<header class="top">
+    <div>
+        <h1>CampusSync Hub</h1>
+        <p class="sub">Ellucian Ethos change notifications → LMS · Library · Email, in real time</p>
+    </div>
+    <div class="worker @(Notifier.WorkerStatus.StartsWith("Ethos unreachable") ? "bad" : "ok")">
+        <span class="dot"></span>
+        <div>
+            <strong>Sync worker</strong>
+            <small>@Notifier.WorkerStatus · last poll @(Notifier.LastPollUtc?.ToLocalTime().ToString("HH:mm:ss") ?? "—")</small>
+        </div>
+    </div>
+</header>
+
+<section class="kpis">
+    <div class="kpi"><span>Notifications processed</span><b>@_processed</b></div>
+    <div class="kpi good"><span>Synced successfully</span><b>@_success</b></div>
+    <div class="kpi warn"><span>Failed attempts</span><b>@_failed</b></div>
+    <div class="kpi bad"><span>Dead-letter queue</span><b>@_dead.Count</b></div>
+    <div class="kpi"><span>Ethos checkpoint</span><b>#@_checkpoint</b></div>
+</section>
+
+<section class="actions">
+    <button class="primary" @onclick="() => Simulate(1)" disabled="@_busy">+ Simulate a student registration</button>
+    <button @onclick="() => Simulate(5)" disabled="@_busy">+ Simulate 5</button>
+    @if (_message is not null) { <span class="msg">@_message</span> }
+</section>
+
+<div class="grid">
+    <section class="card wide">
+        <h2>Live sync log</h2>
+        <table>
+            <thead><tr><th>#</th><th>Time</th><th>Student</th><th>Section</th><th>Steps</th><th>Status</th><th>ms</th></tr></thead>
+            <tbody>
+                @foreach (var l in _logs)
+                {
+                    <tr>
+                        <td class="mono">@l.NotificationId</td>
+                        <td class="mono">@l.Timestamp.ToLocalTime().ToString("HH:mm:ss")</td>
+                        <td>@l.StudentName<br /><small>@l.StudentEmail</small></td>
+                        <td class="mono">@l.SectionCode</td>
+                        <td>@l.Steps @if (l.Error is not null) { <br /><small class="err">@l.Error</small> }</td>
+                        <td><span class="pill @l.Status.ToString().ToLower()">@l.Status</span></td>
+                        <td class="mono">@l.DurationMs.ToString("0")</td>
+                    </tr>
+                }
+                @if (_logs.Count == 0) { <tr><td colspan="7" class="empty">Waiting for the first Ethos notification…</td></tr> }
+            </tbody>
+        </table>
+    </section>
+
+    <section class="card">
+        <h2>Dead-letter queue</h2>
+        @if (_dead.Count == 0)
+        {
+            <p class="empty">Empty. Every notification synced.</p>
+        }
+        @foreach (var d in _dead)
+        {
+            <div class="dead">
+                <div>
+                    <b class="mono">#@d.NotificationId</b> · @d.Attempts attempt(s)
+                    <small class="err">@d.Error</small>
+                </div>
+                <button @onclick="() => Retry(d.NotificationId)" disabled="@_busy">Retry</button>
+            </div>
+        }
+
+        <h2 class="mt">Downstream systems</h2>
+        <ul class="down">
+            <li><span>LMS enrollments</span><b>@_lms</b></li>
+            <li><span>Library accounts</span><b>@_library</b></li>
+            <li><span>Emails sent</span><b>@_emails</b></li>
+        </ul>
+    </section>
+</div>
+
+@code {
+    private int _processed, _success, _failed;
+    private string _checkpoint = "0";
+    private string _lms = "–", _library = "–", _emails = "–";
+    private List<SyncLog> _logs = [];
+    private List<DeadLetter> _dead = [];
+    private bool _busy;
+    private string? _message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Notifier.Changed += OnChanged;
+        await LoadAsync();
+    }
+
+    private void OnChanged() => InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); });
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _processed = await db.ProcessedNotifications.CountAsync();
+        _success = await db.SyncLogs.CountAsync(l => l.Status == SyncStatus.Success || l.Status == SyncStatus.Retried);
+        _failed = await db.SyncLogs.CountAsync(l => l.Status == SyncStatus.Failed);
+        _dead = await db.DeadLetters.OrderBy(d => d.NotificationId).ToListAsync();
+        _logs = await db.SyncLogs.OrderByDescending(l => l.Id).Take(15).ToListAsync();
+        _checkpoint = (await db.SyncStates.FindAsync(SyncDbContext.CheckpointKey))?.Value ?? "0";
+
+        try
+        {
+            var t = Http.CreateClient("targets");
+            _lms = (await t.GetFromJsonAsync<object[]>("lms/enrollments"))!.Length.ToString();
+            _library = (await t.GetFromJsonAsync<object[]>("library/accounts"))!.Length.ToString();
+            _emails = (await t.GetFromJsonAsync<object[]>("notify/outbox"))!.Length.ToString();
+        }
+        catch { _lms = _library = _emails = "offline"; }
+    }
+
+    private async Task Simulate(int count)
+    {
+        _busy = true;
+        try
+        {
+            var ethos = Http.CreateClient("ethos-demo");
+            for (var i = 0; i < count; i++) (await ethos.PostAsync("simulate/registration", null)).EnsureSuccessStatusCode();
+            _message = $"{count} registration(s) published to Ethos. The worker picks them up on its next poll.";
+        }
+        catch (Exception ex) { _message = $"Could not reach Ethos: {ex.Message}"; }
+        finally { _busy = false; }
+    }
+
+    private async Task Retry(long id)
+    {
+        _busy = true;
+        try { _message = $"Replay of #{id}: {await Processor.ReplayAsync(id, CancellationToken.None)}"; }
+        catch (Exception ex) { _message = ex.Message; }
+        finally { _busy = false; await LoadAsync(); }
+    }
+
+    public void Dispose() => Notifier.Changed -= OnChanged;
+}
