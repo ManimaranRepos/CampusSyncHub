@@ -15,7 +15,7 @@
       "command": "dotnet run --project src/MockEthos.Api --urls http://localhost:5101",
       "isBackground": true,
       "presentation": { "group": "campussync", "panel": "dedicated" },
-      "problemMatcher": { "pattern": { "regexp": "^__never__$" }, "background": { "activesBegins": ".", "beginsPattern": "Building|Restore|dotnet", "endsPattern": "Now listening on" } }
+      "problemMatcher": { "pattern": { "regexp": "^__never__$" }, "background": { "activeBegins": true, "beginsPattern": ".", "endsPattern": "Now listening on" } }
     },
     {
       "label": "Target Systems :5201",
@@ -24,7 +24,7 @@
       "options": { "env": { "CHAOS_RATE": "0.3" } },
       "isBackground": true,
       "presentation": { "group": "campussync", "panel": "dedicated" },
-      "problemMatcher": { "pattern": { "regexp": "^__never__$" }, "background": { "activesBegins": ".", "beginsPattern": "Building|Restore|dotnet", "endsPattern": "Now listening on" } }
+      "problemMatcher": { "pattern": { "regexp": "^__never__$" }, "background": { "activeBegins": true, "beginsPattern": ".", "endsPattern": "Now listening on" } }
     },
     {
       "label": "CampusSync Hub :5000",
@@ -32,7 +32,7 @@
       "command": "dotnet run --project src/CampusSync.Hub --urls http://localhost:5000",
       "isBackground": true,
       "presentation": { "group": "campussync", "panel": "dedicated" },
-      "problemMatcher": { "pattern": { "regexp": "^__never__$" }, "background": { "activesBegins": ".", "beginsPattern": "Building|Restore|dotnet", "endsPattern": "Now listening on" } }
+      "problemMatcher": { "pattern": { "regexp": "^__never__$" }, "background": { "activeBegins": true, "beginsPattern": ".", "endsPattern": "Now listening on" } }
     },
     {
       "label": "Run all tests",
