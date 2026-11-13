@@ -13,7 +13,7 @@ When a student registers for a course, the university's Student Information Syst
 
 ![Dashboard](docs/dashboard.png)
 
-🎥 **[Watch the 1-minute narrated demo](docs/campussync-demo.mp4)**
+🎥 **[Watch the 72-second narrated demo](docs/campussync-demo.mp4)**
 
 ## Architecture
 
