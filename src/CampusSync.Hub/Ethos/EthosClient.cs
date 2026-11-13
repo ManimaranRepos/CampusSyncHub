@@ -38,43 +38,49 @@ public interface IEthosClient
 }
 
 /// <summary>
-/// Talks to Ethos Integration. Exchanges the API key for a JWT via POST /auth and caches it
-/// until shortly before expiry, exactly like the real Ethos flow.
+/// Singleton token cache. Exchanges the API key for a JWT via POST /auth and reuses it until
+/// shortly before expiry, exactly like the real Ethos flow. It must be a singleton: typed
+/// HttpClients are transient, so a per-client cache would request a new token on every poll.
 /// </summary>
-public class EthosClient(HttpClient http, IConfiguration config, ILogger<EthosClient> log) : IEthosClient
+public class EthosTokenProvider(IHttpClientFactory httpFactory, IConfiguration config, ILogger<EthosTokenProvider> log)
+{
+    public const string HttpClientName = "ethos-auth";
+    private readonly SemaphoreSlim _lock = new(1, 1);
+    private string? _token;
+    private DateTime _expiresUtc;
+
+    public async Task<string> GetTokenAsync(CancellationToken ct)
+    {
+        if (_token is not null && DateTime.UtcNow < _expiresUtc) return _token;
+        await _lock.WaitAsync(ct);
+        try
+        {
+            if (_token is not null && DateTime.UtcNow < _expiresUtc) return _token;
+            using var req = new HttpRequestMessage(HttpMethod.Post, "auth");
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", config["Ethos:ApiKey"]);
+            using var res = await httpFactory.CreateClient(HttpClientName).SendAsync(req, ct);
+            res.EnsureSuccessStatusCode();
+            _token = (await res.Content.ReadAsStringAsync(ct)).Trim();
+            _expiresUtc = DateTime.UtcNow.AddMinutes(4); // Ethos tokens live 5 min; refresh early
+            log.LogInformation("Obtained new Ethos access token, valid until {ExpiresUtc:HH:mm:ss}Z", _expiresUtc);
+            return _token;
+        }
+        finally { _lock.Release(); }
+    }
+}
+
+/// <summary>Talks to Ethos Integration: change-notification feed and EEDM resources.</summary>
+public class EthosClient(HttpClient http, EthosTokenProvider tokens) : IEthosClient
 {
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
-    private readonly SemaphoreSlim _tokenLock = new(1, 1);
-    private string? _token;
-    private DateTime _tokenExpiresUtc;
-
-    private async Task<string> GetTokenAsync(CancellationToken ct)
-    {
-        if (_token is not null && DateTime.UtcNow < _tokenExpiresUtc) return _token;
-        await _tokenLock.WaitAsync(ct);
-        try
-        {
-            if (_token is not null && DateTime.UtcNow < _tokenExpiresUtc) return _token;
-            using var req = new HttpRequestMessage(HttpMethod.Post, "auth");
-            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", config["Ethos:ApiKey"]);
-            using var res = await http.SendAsync(req, ct);
-            res.EnsureSuccessStatusCode();
-            _token = (await res.Content.ReadAsStringAsync(ct)).Trim();
-            _tokenExpiresUtc = DateTime.UtcNow.AddMinutes(4); // Ethos tokens live 5 min; refresh early
-            log.LogInformation("Obtained new Ethos access token");
-            return _token;
-        }
-        finally { _tokenLock.Release(); }
-    }
-
     private async Task<HttpRequestMessage> BuildAsync(string url, CancellationToken ct)
     {
         var req = new HttpRequestMessage(HttpMethod.Get, url);
-        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", await GetTokenAsync(ct));
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", await tokens.GetTokenAsync(ct));
         req.Headers.Accept.ParseAdd("application/vnd.hedtech.integration.v12+json");
         return req;
     }

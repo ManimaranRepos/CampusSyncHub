@@ -1,5 +1,7 @@
 # CampusSync Hub
 
+[![CI](https://github.com/ManimaranRepos/CampusSyncHub/actions/workflows/ci.yml/badge.svg)](https://github.com/ManimaranRepos/CampusSyncHub/actions/workflows/ci.yml)
+
 **Event-driven university integration platform built on the Ellucian Ethos integration pattern (.NET 8).**
 
 When a student registers for a course, the university's Student Information System publishes a change notification to Ellucian Ethos. CampusSync Hub consumes that notification and, within seconds and with no manual work:
@@ -10,6 +12,8 @@ When a student registers for a course, the university's Student Information Syst
 4. Shows everything live on a **Blazor dashboard**, with failed syncs held in a dead-letter queue for one-click replay
 
 ![Dashboard](docs/dashboard.png)
+
+🎥 **[Watch the 1-minute narrated demo](docs/campussync-demo.mp4)**
 
 ## Architecture
 
@@ -22,7 +26,7 @@ When a student registers for a course, the university's Student Information Syst
 │  courses         │   GET /api/sections/{id}        │  RegistrationSyncProcessor   │
 │  sections        │                                 │    ↓  (Polly resilience)     │
 │  section-        │                                 │  ┌────────────────────────┐  │
-│  registrations   │                                 │  │ SQLite: sync log,      │  │
+│  registrations   │                                 │  │ SQLite (EF Core):      │  │
 └──────────────────┘                                 │  │ dead letters,          │  │
                                                      │  │ idempotency, checkpoint│  │
 ┌──────────────────┐   POST /lms/enrollments         │  └────────────────────────┘  │
@@ -38,16 +42,19 @@ When a student registers for a course, the university's Student Information Syst
 | `src/MockEthos.Api` | Mock of Ellucian Ethos Integration: API-key → JWT auth, EEDM-style resources, `/consume` change-notification feed |
 | `src/TargetSystems.Api` | Mock LMS, library and email gateway. `CHAOS_RATE` makes a share of calls fail with 503 |
 | `src/CampusSync.Hub` | The product: sync worker, processor, resilience, persistence, Blazor dashboard, JSON API |
-| `tests/CampusSync.Tests` | xUnit tests for the sync engine |
+| `tests/CampusSync.Tests` | xUnit unit tests for the sync engine (idempotency, dead-letter, replay) |
+| `tests/CampusSync.E2ETests` | Playwright end-to-end tests: start all three services and drive the real dashboard in a browser |
 
 ## Engineering highlights
 
-- **Ethos auth flow**: exchanges the API key for a short-lived JWT, caches it, refreshes before expiry (thread-safe with `SemaphoreSlim`).
+- **Ethos auth flow**: exchanges the API key for a short-lived JWT, caches it in a singleton, refreshes before expiry (thread-safe with `SemaphoreSlim`), so one token serves every poll.
 - **Checkpointed consumption**: the last processed notification id is persisted after every message, so a restart resumes exactly where it stopped.
 - **Idempotency**: every notification id is recorded once. At-least-once delivery plus idempotent processing gives an exactly-once effect; the LMS endpoint is idempotent too.
 - **Resilience**: `Microsoft.Extensions.Http.Resilience` (Polly v8) with exponential back-off and jitter, per-attempt and total timeouts, and a circuit breaker. In the demo, 30% of downstream calls fail and every registration still syncs.
 - **Dead-letter queue**: anything that fails after all retries is stored with its payload and error, and can be replayed from the dashboard or `POST /api/dead-letters/{id}/retry`.
 - **Live UI**: the worker raises an in-process event, and Blazor Server pushes the update to the browser over SignalR. No page refresh needed.
+- **Structured logging**: Serilog writes readable console output and rolling compact-JSON files. Every line written while handling a notification carries `NotificationId`, `EthosResource` and `IsReplay`, so one registration can be traced end to end in Seq or ELK.
+- **Tested end to end**: Playwright tests boot the whole system on free ports and verify live sync, SignalR updates, and the outage → dead-letter → retry path in a real browser. GitHub Actions runs unit tests, E2E tests and the Docker build on every push.
 - **Swappable**: to point at a real Ethos tenant, change `Ethos:BaseUrl` and `Ethos:ApiKey` in config. The client already speaks the Ethos contract (`/auth`, `/consume`, `/api/{resource}`, versioned `Accept` header).
 
 ## Run it
@@ -71,8 +78,12 @@ docker compose up --build
 ### Tests
 
 ```bash
-dotnet test
+dotnet build -c Release
+pwsh tests/CampusSync.E2ETests/bin/Release/net8.0/playwright.ps1 install chromium   # one time, for E2E
+dotnet test -c Release --no-build
 ```
+
+Already have Chrome? Skip the install and set `PLAYWRIGHT_CHROME_PATH` to its executable.
 
 ## Demo script (2 minutes, good for a LinkedIn video)
 
@@ -97,4 +108,4 @@ dotnet test
 - Mock data and endpoint shapes follow the published Ethos pattern but are simplified. Check the Ellucian developer documentation before integrating with a real tenant.
 - Downstream mocks keep data in memory, so their counters reset when they restart. The Hub's own history lives in `campussync.db`.
 
-**Tech:** .NET 8 · ASP.NET Core Minimal APIs · Blazor Server · SignalR · EF Core + SQLite · Polly v8 · JWT · xUnit · Docker
+**Tech:** .NET 8 · ASP.NET Core Minimal APIs · Blazor Server · SignalR · BackgroundService · EF Core + SQLite · Polly v8 · JWT · Serilog · xUnit · Playwright · Docker · GitHub Actions

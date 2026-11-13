@@ -5,8 +5,12 @@ using CampusSync.Hub.Sync;
 using CampusSync.Hub.Targets;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Http.Resilience;
+using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Structured logging: console for humans, rolling compact-JSON files for log tools (Seq, ELK, Datadog...).
+builder.Host.UseSerilog((ctx, cfg) => cfg.ReadFrom.Configuration(ctx.Configuration));
 
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.ConfigureHttpJsonOptions(o =>
@@ -26,6 +30,11 @@ void Resilience(HttpStandardResilienceOptions o)
     o.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(20);
     o.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(10);
 }
+
+builder.Services.AddSingleton<EthosTokenProvider>();
+builder.Services.AddHttpClient(EthosTokenProvider.HttpClientName, c =>
+        c.BaseAddress = new Uri(builder.Configuration["Ethos:BaseUrl"]!))
+    .AddStandardResilienceHandler(Resilience);
 
 builder.Services.AddHttpClient<IEthosClient, EthosClient>(c =>
         c.BaseAddress = new Uri(builder.Configuration["Ethos:BaseUrl"]!))
@@ -50,6 +59,10 @@ await using (var db = await app.Services.GetRequiredService<IDbContextFactory<Sy
     await db.Database.EnsureCreatedAsync();
 
 if (!app.Environment.IsDevelopment()) app.UseExceptionHandler("/Error", createScopeForErrors: true);
+app.UseSerilogRequestLogging(o => o.GetLevel = (http, _, ex) =>
+    ex is not null || http.Response.StatusCode >= 500 ? Serilog.Events.LogEventLevel.Error
+    : http.Request.Path.StartsWithSegments("/api") ? Serilog.Events.LogEventLevel.Information
+    : Serilog.Events.LogEventLevel.Debug);
 app.UseStaticFiles();
 app.UseAntiforgery();
 

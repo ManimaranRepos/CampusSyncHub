@@ -24,6 +24,13 @@ public class RegistrationSyncProcessor(
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
 
+        // Every log line written while handling this notification carries these properties,
+        // so one registration can be traced end-to-end in Seq / ELK with a single query.
+        using var scope = log.BeginScope(new Dictionary<string, object>
+        {
+            ["NotificationId"] = n.Id, ["EthosResource"] = n.Resource.Name, ["IsReplay"] = isReplay
+        });
+
         if (n.Resource.Name != "section-registrations" || n.Operation is not ("created" or "replaced"))
         {
             await MarkProcessedAsync(db, n.Id, ct);
@@ -68,7 +75,8 @@ public class RegistrationSyncProcessor(
             entry.Status = isReplay ? SyncStatus.Retried : SyncStatus.Success;
             var dead = await db.DeadLetters.FindAsync([n.Id], ct);
             if (dead is not null) db.DeadLetters.Remove(dead);
-            log.LogInformation("Synced registration {Notification} for {Student} → {Section}", n.Id, person.FullName, section.Code);
+            log.LogInformation("Synced registration {Notification} for {Student} → {Section} in {ElapsedMs:0} ms",
+                n.Id, person.FullName, section.Code, sw.Elapsed.TotalMilliseconds);
             return await FinishAsync(ProcessOutcome.Synced);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
