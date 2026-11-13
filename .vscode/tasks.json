@@ -1,0 +1,45 @@
+{
+  // One click runs everything: Terminal > Run Build Task... (Ctrl+Shift+B)
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Run CampusSync (all 3 services)",
+      "dependsOn": ["Mock Ethos API :5101", "Target Systems :5201", "CampusSync Hub :5000"],
+      "dependsOrder": "parallel",
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "Mock Ethos API :5101",
+      "type": "shell",
+      "command": "dotnet run --project src/MockEthos.Api --urls http://localhost:5101",
+      "isBackground": true,
+      "presentation": { "group": "campussync", "panel": "dedicated" },
+      "problemMatcher": { "pattern": { "regexp": "^__never__$" }, "background": { "activesBegins": ".", "beginsPattern": "Building|Restore|dotnet", "endsPattern": "Now listening on" } }
+    },
+    {
+      "label": "Target Systems :5201",
+      "type": "shell",
+      "command": "dotnet run --project src/TargetSystems.Api --urls http://localhost:5201",
+      "options": { "env": { "CHAOS_RATE": "0.3" } },
+      "isBackground": true,
+      "presentation": { "group": "campussync", "panel": "dedicated" },
+      "problemMatcher": { "pattern": { "regexp": "^__never__$" }, "background": { "activesBegins": ".", "beginsPattern": "Building|Restore|dotnet", "endsPattern": "Now listening on" } }
+    },
+    {
+      "label": "CampusSync Hub :5000",
+      "type": "shell",
+      "command": "dotnet run --project src/CampusSync.Hub --urls http://localhost:5000",
+      "isBackground": true,
+      "presentation": { "group": "campussync", "panel": "dedicated" },
+      "problemMatcher": { "pattern": { "regexp": "^__never__$" }, "background": { "activesBegins": ".", "beginsPattern": "Building|Restore|dotnet", "endsPattern": "Now listening on" } }
+    },
+    {
+      "label": "Run all tests",
+      "type": "shell",
+      "command": "dotnet build -c Release; dotnet test -c Release --no-build",
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": "$msCompile"
+    }
+  ]
+}

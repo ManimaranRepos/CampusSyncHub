@@ -69,7 +69,15 @@ dotnet run --project src/CampusSync.Hub     --urls http://localhost:5000
 
 Open **http://localhost:5000** and press **"+ Simulate a student registration"**.
 
-### Option B: Docker
+### Option B: VS Code (one click)
+
+1. `git clone https://github.com/ManimaranRepos/CampusSyncHub` and open the folder in VS Code
+2. **Terminal → Run Build Task…** (`Ctrl+Shift+B`) → starts all three services in their own terminals
+3. Open **http://localhost:5000**
+
+**Terminal → Run Task… → Run all tests** runs the unit and E2E tests.
+
+### Option C: Docker
 
 ```bash
 docker compose up --build

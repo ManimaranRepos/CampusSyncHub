@@ -4,7 +4,9 @@ obj/
 *.db-shm
 *.db-wal
 .vs/
-.vscode/
+.vscode/*
+!.vscode/tasks.json
+!.vscode/extensions.json
 *.user
 TestResults/
 logs/
